@@ -48,5 +48,5 @@ app.use((err, req, res, next) => {
 });
 
 // ── Start ──────────────────────────────────────────────────
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`🚀 Tu HandyMan API corriendo en puerto ${PORT}`));
