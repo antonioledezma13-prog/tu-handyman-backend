@@ -9,10 +9,10 @@ const UserSchema = new Schema({
   phone:        { type: String,  default: '' },
   avatar:       { type: String,  default: '' },
 
-  // Geolocalización (solo técnicos y clientes con ubicación activa)
+  // Geolocalización — opcional, se asigna cuando el usuario activa ubicación
   location: {
-    type:        { type: String, default: 'Point' },
-    coordinates: { type: [Number], default: [0, 0] },  // [lng, lat]
+    type:        { type: String, enum: ['Point'] },
+    coordinates: { type: [Number] },  // [lng, lat]
   },
 
   // Suscripción (solo técnicos)
