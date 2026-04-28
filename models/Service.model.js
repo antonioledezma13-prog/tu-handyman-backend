@@ -15,24 +15,31 @@ const ServiceSchema = new Schema({
     default: 'pending',
   },
 
+  // Ubicación del trabajo (GPS del cliente)
   location: {
-    type:        { type: String, default: 'Point' },
-    coordinates: { type: [Number], required: true },  // [lng, lat]
+    type:        { type: String, enum: ['Point'], default: 'Point' },
+    coordinates: { type: [Number] }, // [lng, lat]
     address:     { type: String, default: '' },
   },
 
-  price:        { type: Number, default: 0 },
-  scheduledAt:  { type: Date },
-  acceptedAt:   { type: Date },
-  completedAt:  { type: Date },
+  // Ubicación en tiempo real del técnico
+  techLocation: {
+    type:        { type: String, enum: ['Point'], default: 'Point' },
+    coordinates: { type: [Number] },
+    updatedAt:   { type: Date },
+  },
 
-  // Rating posterior al servicio
-  rated:        { type: Boolean, default: false },
+  price:       { type: Number, default: 0 },
+  scheduledAt: { type: Date },
+  acceptedAt:  { type: Date },
+  completedAt: { type: Date },
+  rated:       { type: Boolean, default: false },
 }, {
   timestamps: true,
 });
 
 ServiceSchema.index({ location: '2dsphere' });
+ServiceSchema.index({ techLocation: '2dsphere' });
 ServiceSchema.index({ client: 1, status: 1 });
 ServiceSchema.index({ technician: 1, status: 1 });
 
