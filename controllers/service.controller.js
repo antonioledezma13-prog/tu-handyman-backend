@@ -7,29 +7,44 @@ exports.createService = async (req, res) => {
   try {
     const { category, description, lat, lng, address, scheduledAt } = req.body;
 
-    const location = (lat && lng) ? {
-      type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)], address: address || '',
-    } : { address: address || '' };
-
-    const service = await Service.create({
-      client: req.user._id, category, description, location,
+    // Location solo si viene GPS válido — evita error de índice 2dsphere
+    const serviceData = {
+      client:      req.user._id,
+      category,
+      description,
       scheduledAt: scheduledAt || null,
-    });
+    };
 
-    // Notificar técnicos activos (gold → silver → free)
+    if (lat && lng) {
+      serviceData.location = {
+        type:        'Point',
+        coordinates: [parseFloat(lng), parseFloat(lat)],
+        address:     address || '',
+      };
+    } else if (address) {
+      serviceData.location = { address };
+    }
+
+    const service = await Service.create(serviceData);
+
+    // Notificar técnicos (gold -> silver -> free)
     const technicians = await User.find({ role: 'tecnico', isActive: true }).select('_id plan');
     const priority = { gold: 3, silver: 2, free: 1 };
     technicians.sort((a, b) => (priority[b.plan] || 0) - (priority[a.plan] || 0));
 
+    const descPreview = (description || '').slice(0, 60);
     await Promise.all(technicians.map(t => createNotification({
-      user: t._id, service: service._id, type: 'service_requested',
-      title: '🔔 Nueva solicitud de servicio',
-      body: `${req.user.name} necesita: ${category} — ${description.slice(0, 60)}`,
+      user:    t._id,
+      service: service._id,
+      type:    'service_requested',
+      title:   '🔔 Nueva solicitud de servicio',
+      body:    `${req.user.name} necesita: ${category} — ${descPreview}`,
     })));
 
     const populated = await service.populate('client', 'name phone');
     res.status(201).json({ service: populated });
   } catch (err) {
+    console.error('createService error:', err.message);
     res.status(500).json({ error: err.message });
   }
 };
@@ -68,7 +83,7 @@ exports.pendingServices = async (req, res) => {
   }
 };
 
-// GET /api/services/:id — detalle con ubicaciones
+// GET /api/services/:id
 exports.getService = async (req, res) => {
   try {
     const service = await Service.findById(req.params.id)
@@ -100,9 +115,11 @@ exports.acceptService = async (req, res) => {
     await service.save();
 
     await createNotification({
-      user: service.client._id, service: service._id, type: 'service_accepted',
-      title: '✅ Técnico en camino',
-      body:  `${req.user.name} aceptó tu solicitud y está en camino.`,
+      user:    service.client._id,
+      service: service._id,
+      type:    'service_accepted',
+      title:   '✅ Técnico en camino',
+      body:    `${req.user.name} aceptó tu solicitud y está en camino.`,
     });
 
     res.json({ service });
@@ -128,7 +145,10 @@ exports.updateStatus = async (req, res) => {
     if (!isOwner && !isTech) return res.status(403).json({ error: 'Sin permiso.' });
 
     service.status = status;
-    if (status === 'completed') { service.completedAt = new Date(); if (price) service.price = price; }
+    if (status === 'completed') {
+      service.completedAt = new Date();
+      if (price) service.price = price;
+    }
     await service.save();
 
     const notifs = {
@@ -147,7 +167,7 @@ exports.updateStatus = async (req, res) => {
   }
 };
 
-// PATCH /api/services/:id/tech-location — técnico comparte GPS en tiempo real
+// PATCH /api/services/:id/tech-location
 exports.updateTechLocation = async (req, res) => {
   try {
     const { lat, lng } = req.body;
