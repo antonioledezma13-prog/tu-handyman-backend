@@ -7,18 +7,30 @@ const rateLimit  = require('express-rate-limit');
 
 const app = express();
 
-// ── Middlewares ────────────────────────────────────────────
-app.use(helmet());
+// ── CORS ───────────────────────────────────────────────────
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  process.env.CLIENT_URL,
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.frontend_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // Postman / health checks
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS bloqueado para: ${origin}`));
+  },
   credentials: true,
 }));
+
+// ── Middlewares ────────────────────────────────────────────
+app.use(helmet());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Rate limiter global
 app.use(rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
+  windowMs: 15 * 60 * 1000,
   max: 100,
   message: { error: 'Demasiadas peticiones, intenta más tarde.' },
 }));
@@ -48,5 +60,5 @@ app.use((err, req, res, next) => {
 });
 
 // ── Start ──────────────────────────────────────────────────
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Tu HandyMan API corriendo en puerto ${PORT}`));
