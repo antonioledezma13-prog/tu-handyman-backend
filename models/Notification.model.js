@@ -1,17 +1,20 @@
 const { Schema, model } = require('mongoose');
 
 const NotificationSchema = new Schema({
-  user:    { type: Schema.Types.ObjectId, ref: 'User', required: true }, // destinatario
+  user:    { type: Schema.Types.ObjectId, ref: 'User', required: true },
   service: { type: Schema.Types.ObjectId, ref: 'Service' },
   type: {
     type: String,
     enum: [
-      'service_requested',  // técnico: nuevo trabajo disponible
-      'service_accepted',   // cliente: técnico aceptó
-      'service_in_progress',// cliente: técnico en camino / trabajando
-      'service_completed',  // cliente: trabajo terminado
-      'service_cancelled',  // ambos: cancelado
-      'new_review',         // técnico: recibió calificación
+      'service_requested',
+      'service_quoted',
+      'quote_accepted',
+      'quote_rejected',
+      'service_accepted',
+      'service_in_progress',
+      'service_completed',
+      'service_cancelled',
+      'new_review',
     ],
     required: true,
   },
