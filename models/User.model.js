@@ -9,18 +9,19 @@ const UserSchema = new Schema({
   phone:        { type: String,  default: '' },
   avatar:       { type: String,  default: '' },
 
-  // Geolocalización — opcional, se asigna cuando el usuario activa ubicación
+  // Geolocalización — opcional
   location: {
     type:        { type: String, enum: ['Point'] },
     coordinates: { type: [Number] },  // [lng, lat]
   },
 
-  // Suscripción (solo técnicos)
+  // Suscripción (técnicos)
   plan:         { type: String, enum: ['free', 'silver', 'gold'], default: 'free' },
   planExpires:  { type: Date },
-  specialty:    { type: String, default: '' },          // solo técnicos
-  description:  { type: String, default: '' },          // bio técnico
-  gallery:      [{ type: String }],                     // URLs fotos de trabajos
+  specialty:    { type: String, default: '' },
+  specialties:  [{ type: String }],   // múltiples especialidades (para SOS matching)
+  description:  { type: String, default: '' },
+  gallery:      [{ type: String }],
 
   // Reputación
   rating:       { type: Number, default: 0, min: 0, max: 5 },
@@ -29,6 +30,7 @@ const UserSchema = new Schema({
   // Estado
   isVerified:   { type: Boolean, default: false },
   isOnline:     { type: Boolean, default: false },
+  isAvailable:  { type: Boolean, default: true },   // disponible para tomar trabajos
   isActive:     { type: Boolean, default: true },
 
   // Recuperación de contraseña
@@ -38,22 +40,18 @@ const UserSchema = new Schema({
   timestamps: true,
 });
 
-// Índice 2dsphere para $near / $geoWithin
-UserSchema.index({ location: '2dsphere' });
-UserSchema.index({ role: 1, plan: -1, rating: -1 }); // búsqueda con prioridad por plan
+UserSchema.index({ location: '2dsphere' }, { sparse: true });
+UserSchema.index({ role: 1, plan: -1, rating: -1 });
 
-// Hash contraseña antes de guardar
 UserSchema.pre('save', async function () {
   if (!this.isModified('password')) return;
   this.password = await bcrypt.hash(this.password, 12);
 });
 
-// Comparar contraseña
 UserSchema.methods.comparePassword = function (candidate) {
   return bcrypt.compare(candidate, this.password);
 };
 
-// No exponer password en JSON
 UserSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;

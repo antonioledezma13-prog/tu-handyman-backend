@@ -2,24 +2,24 @@ const Service      = require('../models/Service.model');
 const User         = require('../models/User.model');
 const { createNotification } = require('./notification.controller');
 
-// POST /api/services
+// ── POST /api/services ─────────────────────────────────────────
 exports.createService = async (req, res) => {
   try {
-    const { category, description, lat, lng, address, scheduledAt } = req.body;
+    const { category, description, lat, lng, address, scheduledAt, isEmergency } = req.body;
 
-    // Location solo si viene GPS válido — evita error de índice 2dsphere
     const serviceData = {
       client:      req.user._id,
       category,
       description,
+      isEmergency: !!isEmergency,
       scheduledAt: scheduledAt || null,
     };
 
     if (lat && lng) {
       serviceData.location = {
-        type:        'Point',
+        type: 'Point',
         coordinates: [parseFloat(lng), parseFloat(lat)],
-        address:     address || '',
+        address: address || '',
       };
     } else if (address) {
       serviceData.location = { address };
@@ -27,19 +27,39 @@ exports.createService = async (req, res) => {
 
     const service = await Service.create(serviceData);
 
-    // Notificar técnicos (gold -> silver -> free)
-    const technicians = await User.find({ role: 'tecnico', isActive: true }).select('_id plan');
-    const priority = { gold: 3, silver: 2, free: 1 };
-    technicians.sort((a, b) => (priority[b.plan] || 0) - (priority[a.plan] || 0));
+    // Especialidades de emergencia SOS
+    const SOS_SPECIALTIES = ['electricidad','cerrajeria','plomeria','mecanica','ac_refrigeracion','gas'];
+
+    let techQuery = { role: 'tecnico', isActive: true, isAvailable: true };
+
+    if (isEmergency && lat && lng) {
+      // Query geoespacial — técnicos más cercanos en 5km
+      techQuery.location = {
+        $near: {
+          $geometry: { type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)] },
+          $maxDistance: 5000,
+        },
+      };
+      techQuery.specialty = { $in: SOS_SPECIALTIES };
+    }
+
+    const technicians = await User.find(techQuery).select('_id plan specialty').limit(isEmergency ? 10 : 100);
+
+    // Prioridad: gold → silver → free
+    if (!isEmergency) {
+      const priority = { gold: 3, silver: 2, free: 1 };
+      technicians.sort((a, b) => (priority[b.plan] || 0) - (priority[a.plan] || 0));
+    }
 
     const descPreview = (description || '').slice(0, 60);
-    await Promise.all(technicians.map(t => createNotification({
-      user:    t._id,
-      service: service._id,
-      type:    'service_requested',
-      title:   '🔔 Nueva solicitud de servicio',
-      body:    `${req.user.name} necesita: ${category} — ${descPreview}`,
-    })));
+    const notifTitle  = isEmergency ? '🚨 EMERGENCIA — Servicio urgente' : '🔔 Nueva solicitud de servicio';
+    const notifBody   = isEmergency
+      ? `¡URGENTE! ${req.user.name} necesita ayuda ahora: ${category} — ${descPreview}`
+      : `${req.user.name} necesita: ${category} — ${descPreview}`;
+
+    await Promise.all(technicians.slice(0, isEmergency ? 5 : technicians.length).map(t =>
+      createNotification({ user: t._id, service: service._id, type: 'service_requested', title: notifTitle, body: notifBody })
+    ));
 
     const populated = await service.populate('client', 'name phone');
     res.status(201).json({ service: populated });
@@ -49,7 +69,7 @@ exports.createService = async (req, res) => {
   }
 };
 
-// GET /api/services/my — historial paginado
+// ── GET /api/services/my ──────────────────────────────────────
 exports.myServices = async (req, res) => {
   try {
     const { status, page = 1, limit = 20 } = req.query;
@@ -60,7 +80,7 @@ exports.myServices = async (req, res) => {
     const total    = await Service.countDocuments(filter);
     const services = await Service.find(filter)
       .populate('client',     'name email phone avatar')
-      .populate('technician', 'name email phone avatar specialty rating plan')
+      .populate('technician', 'name email phone avatar specialty rating plan isOnline location')
       .sort({ createdAt: -1 })
       .skip((parseInt(page) - 1) * parseInt(limit))
       .limit(parseInt(limit));
@@ -71,24 +91,26 @@ exports.myServices = async (req, res) => {
   }
 };
 
-// GET /api/services/pending
+// ── GET /api/services/pending ─────────────────────────────────
 exports.pendingServices = async (req, res) => {
   try {
     const services = await Service.find({ status: 'pending' })
       .populate('client', 'name phone avatar')
-      .sort({ createdAt: -1 }).limit(30);
+      .sort({ isEmergency: -1, createdAt: -1 })   // emergencias primero
+      .limit(30);
     res.json({ results: services.length, services });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// GET /api/services/:id
+// ── GET /api/services/:id ─────────────────────────────────────
 exports.getService = async (req, res) => {
   try {
     const service = await Service.findById(req.params.id)
       .populate('client',     'name email phone avatar')
-      .populate('technician', 'name email phone avatar specialty rating plan');
+      .populate('technician', 'name email phone avatar specialty rating plan isOnline location techLocation');
+
     if (!service) return res.status(404).json({ error: 'Servicio no encontrado.' });
 
     const isOwner = String(service.client._id)     === String(req.user._id);
@@ -101,25 +123,31 @@ exports.getService = async (req, res) => {
   }
 };
 
-// PATCH /api/services/:id/accept
-exports.acceptService = async (req, res) => {
+// ── PATCH /api/services/:id/quote — técnico envía cotización ──
+exports.quoteService = async (req, res) => {
   try {
+    const { quotedPrice, quotedNote } = req.body;
+    if (!quotedPrice) return res.status(400).json({ error: 'quotedPrice requerido.' });
+
     const service = await Service.findById(req.params.id).populate('client', 'name _id');
     if (!service) return res.status(404).json({ error: 'Servicio no encontrado.' });
-    if (service.status !== 'pending')
-      return res.status(400).json({ error: 'El servicio ya fue tomado o cancelado.' });
+    if (!['pending'].includes(service.status))
+      return res.status(400).json({ error: 'Solo se puede cotizar servicios pendientes.' });
 
-    service.technician = req.user._id;
-    service.status     = 'accepted';
-    service.acceptedAt = new Date();
+    service.technician  = req.user._id;
+    service.quotedPrice = parseFloat(quotedPrice);
+    service.quotedNote  = quotedNote || '';
+    service.quotedAt    = new Date();
+    service.status      = 'quoted';
     await service.save();
 
+    // Notificar al cliente
     await createNotification({
       user:    service.client._id,
       service: service._id,
-      type:    'service_accepted',
-      title:   '✅ Técnico en camino',
-      body:    `${req.user.name} aceptó tu solicitud y está en camino.`,
+      type:    'service_quoted',
+      title:   '💰 Cotización recibida',
+      body:    `${req.user.name} cotizó tu servicio en $${quotedPrice}. Acepta o rechaza.`,
     });
 
     res.json({ service });
@@ -128,7 +156,53 @@ exports.acceptService = async (req, res) => {
   }
 };
 
-// PATCH /api/services/:id/status
+// ── PATCH /api/services/:id/respond — cliente acepta o rechaza cotización ──
+exports.respondQuote = async (req, res) => {
+  try {
+    const { decision } = req.body;  // 'accept' | 'reject'
+    if (!['accept','reject'].includes(decision))
+      return res.status(400).json({ error: 'decision debe ser accept o reject.' });
+
+    const service = await Service.findById(req.params.id)
+      .populate('technician', 'name _id');
+    if (!service) return res.status(404).json({ error: 'Servicio no encontrado.' });
+    if (String(service.client) !== String(req.user._id))
+      return res.status(403).json({ error: 'Solo el cliente puede responder.' });
+    if (service.status !== 'quoted')
+      return res.status(400).json({ error: 'No hay cotización pendiente.' });
+
+    if (decision === 'accept') {
+      service.status           = 'accepted';
+      service.price            = service.quotedPrice;
+      service.priceApprovedAt  = new Date();
+      service.acceptedAt       = new Date();
+
+      await createNotification({
+        user:    service.technician._id,
+        service: service._id,
+        type:    'quote_accepted',
+        title:   '✅ Cotización aceptada',
+        body:    `${req.user.name} aceptó tu cotización de $${service.quotedPrice}. ¡Empieza el trabajo!`,
+      });
+    } else {
+      service.status = 'rejected';
+      await createNotification({
+        user:    service.technician._id,
+        service: service._id,
+        type:    'quote_rejected',
+        title:   '❌ Cotización rechazada',
+        body:    `${req.user.name} rechazó tu cotización de $${service.quotedPrice}.`,
+      });
+    }
+
+    await service.save();
+    res.json({ service });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ── PATCH /api/services/:id/status ───────────────────────────
 exports.updateStatus = async (req, res) => {
   try {
     const { status, price } = req.body;
@@ -152,11 +226,10 @@ exports.updateStatus = async (req, res) => {
     await service.save();
 
     const notifs = {
-      in_progress: { user: service.client._id,      type: 'service_in_progress', title: '🔧 Trabajo en progreso', body: `${service.technician?.name} ha comenzado el trabajo.` },
-      completed:   { user: service.client._id,      type: 'service_completed',   title: '🎉 Trabajo completado',  body: `${service.technician?.name} completó el trabajo. ¡Califica el servicio!` },
+      in_progress: { user: service.client._id,      type: 'service_in_progress', title: '🔧 Trabajo en progreso',  body: `${service.technician?.name} comenzó el trabajo.` },
+      completed:   { user: service.client._id,      type: 'service_completed',   title: '🎉 Trabajo completado',   body: `${service.technician?.name} completó el trabajo. ¡Califica el servicio!` },
       cancelled:   { user: isOwner ? service.technician?._id : service.client._id, type: 'service_cancelled', title: '❌ Servicio cancelado', body: `El servicio de ${service.category} fue cancelado.` },
     };
-
     if (notifs[status]?.user) {
       await createNotification({ ...notifs[status], service: service._id });
     }
@@ -167,7 +240,7 @@ exports.updateStatus = async (req, res) => {
   }
 };
 
-// PATCH /api/services/:id/tech-location
+// ── PATCH /api/services/:id/tech-location ────────────────────
 exports.updateTechLocation = async (req, res) => {
   try {
     const { lat, lng } = req.body;
@@ -176,11 +249,9 @@ exports.updateTechLocation = async (req, res) => {
     const service = await Service.findById(req.params.id);
     if (!service) return res.status(404).json({ error: 'Servicio no encontrado.' });
     if (String(service.technician) !== String(req.user._id))
-      return res.status(403).json({ error: 'Solo el técnico asignado puede actualizar ubicación.' });
+      return res.status(403).json({ error: 'Solo el técnico asignado.' });
 
-    service.techLocation = {
-      type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)], updatedAt: new Date(),
-    };
+    service.techLocation = { type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)], updatedAt: new Date() };
     await service.save();
 
     res.json({ ok: true, techLocation: service.techLocation });
