@@ -95,3 +95,42 @@ exports.updatePlan = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+// PATCH /api/users/me/whatsapp — técnico configura WhatsApp
+exports.updateWhatsapp = async (req, res) => {
+  try {
+    const { whatsappNumber, callmebotApiKey, whatsappEnabled } = req.body;
+
+    const updates = {};
+    if (whatsappNumber  !== undefined) updates.whatsappNumber  = whatsappNumber.trim();
+    if (callmebotApiKey !== undefined) updates.callmebotApiKey = callmebotApiKey.trim();
+    if (whatsappEnabled !== undefined) updates.whatsappEnabled = !!whatsappEnabled;
+
+    const user = await require('../models/User.model').findByIdAndUpdate(
+      req.user._id, updates, { new: true }
+    );
+
+    res.json({ ok: true, whatsappEnabled: user.whatsappEnabled, whatsappNumber: user.whatsappNumber });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// POST /api/users/me/whatsapp/test — enviar mensaje de prueba
+exports.testWhatsapp = async (req, res) => {
+  try {
+    const User = require('../models/User.model');
+    const { sendWhatsApp } = require('../utils/whatsapp');
+
+    const user = await User.findById(req.user._id).select('+callmebotApiKey');
+    if (!user.whatsappNumber || !user.callmebotApiKey)
+      return res.status(400).json({ error: 'Configura tu número y API key primero.' });
+
+    const msg = '✅ Tu HandyMan — ¡Notificaciones WhatsApp activadas correctamente! Recibirás alertas aquí cuando lleguen nuevas solicitudes de servicio.';
+    const result = await sendWhatsApp(user.whatsappNumber, user.callmebotApiKey, msg);
+
+    res.json({ ok: result.ok, message: result.ok ? 'Mensaje enviado' : 'Falló el envío' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
