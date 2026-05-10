@@ -22,13 +22,13 @@ exports.seedPlans = async (req, res) => {
         features: ['Perfil básico', 'Hasta 3 leads/mes'],
       },
       {
-        name: 'silver', displayName: 'Silver', price: 15,
+        name: 'silver', displayName: 'Silver', price: 3,
         leadsPerMonth: 20, searchPriority: 2,
         chatEnabled: true, callEnabled: false, galleryEnabled: false, badgeVerified: false,
         features: ['Perfil completo + foto', 'Hasta 20 leads/mes', 'Prioridad media en búsqueda', 'Chat directo'],
       },
       {
-        name: 'gold', displayName: 'Gold', price: 35,
+        name: 'gold', displayName: 'Gold', price: 6,
         leadsPerMonth: -1, searchPriority: 3,
         chatEnabled: true, callEnabled: true, galleryEnabled: true, badgeVerified: true,
         features: ['Perfil premium + galería', 'Leads ilimitados', 'Máxima prioridad', 'Chat + llamada', 'Insignia verificado ⭐'],
